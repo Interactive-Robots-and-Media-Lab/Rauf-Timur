@@ -15,6 +15,9 @@
 
 using namespace cv;
 
+//this one doesn't work on linux
+//and I dont understand why!
+//This class members (don't) allow to read and write
 class kinect2IO
 {
 private:
@@ -48,9 +51,9 @@ private:
     {
         iofile << (int)0 << seconds << getStepSize(&img) << getOffset() << img.rows << img.cols << (int)0 << (int)0;
     }
-    void writeData(Mat img)
+    void writeData(Mat* img)
     {
-        iofile.write((char*)img.data,img.rows*img.cols*img.elemSize1());
+        iofile.write((char*)img->data,img->rows*img->cols*img->elemSize1());
     }
     void writeTime()
     {
@@ -81,27 +84,19 @@ private:
     }
     
 public:
-    kinect2IO (libfreenect2::Freenect2Device* kinectDevice, string filename, std::string arg = "")
+    kinect2IO (libfreenect2::Freenect2Device* kinectDevice, string filename)
     {
-        if (arg.length()>0)
+        std::ofstream file;
+        file.open(filename);
+        if (!file.is_open())
         {
-            if(arg.length()==1 && arg[0]=='r')
-            {
-                iofile.open(filename, std::ios::in | std::ios::binary);
-                
-            }
-            else if(arg.length()==1 && arg[0]=='w')
-            {
-                iofile.open(filename, std::ios::out | std::ios::binary);
-            }
-            else if(arg.length()==2 && ((arg[0]=='r' && arg[0]=='w') || (arg[0]=='w' && arg[0]=='r')))
-            {
-                iofile.open(filename, std::ios::out | std::ios::in | std::ios::binary);
-            }
+            std::cout << "Panika";
         }
-        else
+        file.close();
+        iofile.open(filename);
+        if (!iofile.is_open())
         {
-            iofile.open(filename, std::ios::out | std::ios::in | std::ios::binary);
+            std::cout << "Panika";
         }
         device = kinectDevice;
         zeroTime = clock();
@@ -113,47 +108,56 @@ public:
         iofile.close();
     }
 
-    int framesRecord(Mat img, int numOfFrames)
-    {
+    int framesRecord(int numOfFrames)
+    {        
+
         int types = 0;
-        types |= libfreenect2::Frame::Ir || libfreenect2::Frame::Depth;
-        //types |= libfreenect2::Frame::Color;
+        types |= libfreenect2::Frame::Ir | libfreenect2::Frame::Depth;
         libfreenect2::SyncMultiFrameListener listener(types);
         libfreenect2::FrameMap frames;
-        //dev->setColorFrameListener(&listener);
+//        if (!device->start())
+//          return -1;
         device->setIrAndDepthFrameListener(&listener);
-        listener.release(frames);
+        if(!listener.waitForNewFrame(frames,10000))
+        {
+            return -1;
+        }
 
-        writeInfoFrames(img,numOfFrames);
+        //libfreenect2::Frame *rgb = frames[libfreenect2::Frame::Color];
+        libfreenect2::Frame *depth = frames[libfreenect2::Frame::Depth];
+        Mat matDepth(depth->height,depth->width, CV_32FC1,depth->data);
+        //Mat matRgb(rgb->height,rgb->width, CV_8UC4,rgb->data);
+
+        writeInfoFrames(matDepth,numOfFrames);
         for (int i = 0; i<numOfFrames; i++)
         {
             writeTime();
-            writeData(img);
+            writeData(&matDepth);
+            //writeData(&matRgb);
             frame++;
+            std::cout << "Frame written" << std::endl;
             listener.release(frames);
+            listener.waitForNewFrame(frames,10000);
         }
+        listener.release(frames);
+        device->stop();
         return 0;
     }
     
-    int timeRecord(Mat img, int seconds)
+    int timeRecord(libfreenect2::SyncMultiFrameListener* listener, Mat* img, int seconds)
     {
-        int types = 0;
-        types |= libfreenect2::Frame::Ir || libfreenect2::Frame::Depth;
-        //types |= libfreenect2::Frame::Color;
-        libfreenect2::SyncMultiFrameListener listener(types);
         libfreenect2::FrameMap frames;
-        //dev->setColorFrameListener(&listener);
-        device->setIrAndDepthFrameListener(&listener);
-        listener.release(frames);
+        device->setColorFrameListener(listener);
+        device->setIrAndDepthFrameListener(listener);
 
-        writeInfoSeconds(img, seconds);
+        writeInfoSeconds(*img, seconds);
         for (int i = 0; i<CLOCKS_PER_SEC*seconds; i=clock())
         {
             writeTime();
             writeData(img);
             //writeMetaData();
             frame++;
-            listener.release(frames);
+            listener->release(frames);
         }
         return 0;
     }
@@ -218,5 +222,104 @@ public:
         {
             return 0;
         }
+    }
+
+    int close()
+    {
+        iofile.close();
+        return 0;
+    }
+};
+
+class kinect2writer
+{
+private:
+    libfreenect2::Freenect2Device* device;
+    std::ofstream file;
+    int frames = 0;
+    int seconds = 0;
+    int stepSize;
+    int offSet;
+    int rgbRows;
+    int rgbCols;
+    int depthRows;
+    int depthCols;
+    int status = 0;
+    int checkBytes = 0;
+    int zeroTime = clock();
+public:
+    kinect2writer (libfreenect2::Freenect2Device* kinectDevice)
+    {
+        device = kinectDevice;
+        int types = 0;
+        types |= libfreenect2::Frame::Color | libfreenect2::Frame::Ir | libfreenect2::Frame::Depth;
+        libfreenect2::SyncMultiFrameListener listener(types);
+        libfreenect2::FrameMap frames;
+        device->start();
+        device->setColorFrameListener(&listener);
+        device->setIrAndDepthFrameListener(&listener);
+        listener.waitForNewFrame(frames);
+        libfreenect2::Frame *rgb = frames[libfreenect2::Frame::Color];
+        libfreenect2::Frame *depth = frames[libfreenect2::Frame::Depth];
+        rgbRows = rgb->height;
+        rgbCols = rgb->width;
+        depthRows = depth->height;
+        depthCols = depth->width;
+        offSet = 11*sizeof(int) + sizeof(float);
+        stepSize = (rgbRows*rgbCols+depthRows*depthCols)*4+sizeof(float);
+        listener.release(frames);
+        device->stop();
+    }
+    ~kinect2writer()
+    {
+        if (file.is_open())
+            file.close();
+    }
+
+    int framesRecord(string filename, int numOfFrames)
+    {
+        file.open(filename, std::ios_base::binary | std::ios_base::out | std::ios_base::app);
+
+        int types = 0;
+        types |= libfreenect2::Frame::Color | libfreenect2::Frame::Ir | libfreenect2::Frame::Depth;
+        libfreenect2::SyncMultiFrameListener listener(types);
+        libfreenect2::FrameMap frameMap;
+        device->start();
+        device->setColorFrameListener(&listener);
+        device->setIrAndDepthFrameListener(&listener);
+        listener.waitForNewFrame(frameMap,10000);
+
+        file.seekp(offSet);
+        for (int i = 0; i<numOfFrames; i++)
+        {
+            libfreenect2::Frame *rgb = frameMap[libfreenect2::Frame::Color];
+            libfreenect2::Frame *depth = frameMap[libfreenect2::Frame::Depth];
+            file << (int)(clock()-zeroTime);
+            file.write((char*)depth->data,depthRows*depthCols*4);
+            file.write((char*)rgb->data,rgbRows*rgbCols*4);
+//            for (int h = 0; h<depthRows*depthCols*4; h++)
+//                file << depth->data[h];
+//            for (int h = 0; h<rgbRows*rgbCols*4; h++)
+//                file << rgb->data[h];
+            std::cout << "Frame#" << i+1 << "is written\n" << (clock()-zeroTime)/CLOCKS_PER_SEC << " seconds" << std::endl;
+            listener.release(frameMap);
+            listener.waitForNewFrame(frameMap,10000);
+        }
+        listener.release(frameMap);
+        device->stop();
+        file.seekp(0);
+        status = 1;
+        checkBytes = numOfFrames ^ (int)((clock()-zeroTime)/CLOCKS_PER_SEC) ^ stepSize ^ offSet ^ rgbRows
+                     ^ rgbCols ^ depthRows ^ depthCols ^ status;
+        file << numOfFrames << (int)((clock()-zeroTime)/CLOCKS_PER_SEC) << stepSize << offSet << rgbRows
+             << rgbCols << depthRows << depthCols << status << checkBytes;
+        file.close();
+        return 0;
+    }
+
+    void close()
+    {
+        if (file.is_open())
+            file.close();
     }
 };

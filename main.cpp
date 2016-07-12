@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <cstdlib>
 #include <signal.h>
 #include <planeextractor.hpp>
@@ -45,7 +46,6 @@ int main(int argc, char *argv[])
   std::string serial = "";
   bool enable_rgb = true;
   bool enable_depth = true;
-  size_t framemax = -1;
 
   if(freenect2.enumerateDevices() == 0)
   {
@@ -98,52 +98,53 @@ int main(int argc, char *argv[])
   std::cout << "device firmware: " << dev->getFirmwareVersion() << std::endl;
   libfreenect2::Registration* registration = new libfreenect2::Registration(dev->getIrCameraParams(), dev->getColorCameraParams());
   libfreenect2::Frame undistorted(512, 424, 4), registered(512, 424, 4);
-  size_t framecount = 0;
 
 /// [loop start]
-  PlaneExtractor PE(dev);
-  kinect2IO streamer(dev,"streamFile.kin");
-  while(!protonect_shutdown && (framemax == (size_t)-1 || framecount < framemax))
-  {
+//  PlaneExtractor PE(dev);
     if (!listener.waitForNewFrame(frames, 10*1000)) // 10 sconds
     {
       std::cout << "timeout!" << std::endl;
       return -1;
     }
     //libfreenect2::Frame *rgb = frames[libfreenect2::Frame::Color];
-    libfreenect2::Frame *depth = frames[libfreenect2::Frame::Depth];
+//    libfreenect2::Frame *depth = frames[libfreenect2::Frame::Depth];
 
-    Mat matDepth(depth->height,depth->width, CV_32FC1,depth->data);
-    Mat filteredDepth = PE.resizeMat(&matDepth);
-    float* floatData = (float*)filteredDepth.data;
-    vector<int> stat;
-    for(int i = 0; i<300; i++)
-    {
-        stat.push_back(0);
-    }
-    for (int i = 0; i<filteredDepth.rows; i++)
-    {
-        for (int j = 0; j<filteredDepth.cols;j++)
-        {
-            std::cout <<*floatData << " ";
-            stat[round((*floatData)/10)]++;
-            floatData++;
-        }
-        std::cout << std::endl << std::endl;
-    }
-    for(int i = 0; i<300; i++)
-    {
-        std::cerr << stat[i] << " ";
-    }
-
-    vector<Plane> planesSquare = PE.extractFromSquare(&filteredDepth);
+//    Mat matDepth(depth->height,depth->width, CV_32FC1,depth->data);
+//    Mat filteredDepth = PE.resizeMat(&matDepth);
+//    float* floatData = (float*)filteredDepth.data;
+//    vector<int> stat;
+//    for(int i = 0; i<300; i++)
+//    {
+//        stat.push_back(0);
+//    }
+//    for (int i = 0; i<filteredDepth.rows; i++)
+//    {
+//        for (int j = 0; j<filteredDepth.cols;j++)
+//        {
+//            std::cout <<*floatData << " ";
+//            stat[round((*floatData)/10)]++;
+//            floatData++;
+//        }
+//        std::cout << std::endl << std::endl;
+//    }
+//    for(int i = 0; i<300; i++)
+//    {
+//        std::cerr << stat[i] << " ";
+//    }
+//
+//    vector<Plane> planesSquare = PE.extractFromSquare(&filteredDepth);
     //vector<Plane> planesClockwise = PE.extractFromClockwise(&filteredDepth);
     //imshow("paral prj",filteredDepth);
-    imwrite("/home/tim/Desktop/calib/test.jpg",matDepth);
-    waitKey(0);
-    listener.release(frames);
+//    imwrite("/home/tim/Desktop/calib/test.jpg",matDepth);
+//    waitKey(0);
+    kinect2writer writer(dev);
+    writer.framesRecord("test.bin",200);
+    writer.close();
 
-  }
+//    listener.release(frames);
+
+
+
   dev->stop();
   dev->close();
   delete registration;
